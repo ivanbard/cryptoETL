@@ -1,0 +1,8 @@
+{
+  "network": "eth",
+  "pools": [
+    {"address": "0x3416cf6c708da44db2624d63ea0aaef7113527c6", "label": "Uniswap v3 USDC / USDT"},
+    {"address": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85", "label": "Curve USDC / USDT"},
+    {"address": "0x667701e51b4d1ca244f17c78f7ab8744b4c99f9b", "label": "Fluid USDC / USDT"}
+  ]
+}

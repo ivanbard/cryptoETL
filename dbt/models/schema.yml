@@ -1,0 +1,27 @@
+version: 2
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: pool_snapshots
+models:
+  - name: stg_pool_snapshots
+    description: One provider observation per Ethereum pool and collection timestamp. Source update time is unknown.
+    columns:
+      - name: observation_id
+        data_tests: [unique, not_null]
+      - name: pool_address
+        data_tests: [not_null]
+      - name: dex_id
+        data_tests: [not_null]
+      - name: observed_at
+        data_tests: [not_null]
+  - name: latest_pools
+    description: Latest observation per tracked pool, including collection age.
+    columns:
+      - name: pool_address
+        data_tests: [unique, not_null]
+  - name: dex_liquidity
+    description: Liquidity share within the tracked cohort, excluding observations older than two hours.
+  - name: token_prices
+    description: Both token sides of fresh pool observations, with price deviations from one USD in basis points.

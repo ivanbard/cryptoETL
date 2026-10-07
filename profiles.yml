@@ -1,0 +1,12 @@
+crypto_etl:
+  target: local
+  outputs:
+    local:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('PGPORT', '55432') | int }}"
+      user: "{{ env_var('PGUSER', 'crypto') }}"
+      password: "{{ env_var('PGPASSWORD', 'local_dev_only') }}"
+      dbname: "{{ env_var('PGDATABASE', 'crypto_etl') }}"
+      schema: analytics
+      threads: 2

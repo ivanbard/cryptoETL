@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: crypto_etl
+      POSTGRES_USER: crypto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto -d crypto_etl"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  pipeline:
+    build: .
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: crypto_etl
+      PGUSER: crypto
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: [tools]
+
+  metabase:
+    image: metabase/metabase:v0.63.19.3
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase_app
+      MB_DB_PORT: "5432"
+      MB_DB_USER: crypto
+      MB_DB_PASS: ${POSTGRES_PASSWORD:-local_dev_only}
+      MB_DB_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

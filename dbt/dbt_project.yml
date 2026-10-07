@@ -1,0 +1,11 @@
+name: crypto_etl
+version: '1.0.0'
+config-version: 2
+profile: crypto_etl
+flags:
+  send_anonymous_usage_stats: false
+model-paths: [models]
+test-paths: [tests]
+models:
+  crypto_etl:
+    +materialized: view
