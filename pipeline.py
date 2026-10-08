@@ -73,25 +73,34 @@ def validate(record):
     return record
 
 
-def collect(watchlist, archive):
+def collect(watchlist, archive, run_id=None):
     config = json.loads(watchlist.read_text(encoding="utf-8"))
     if config["network"] != "eth" or not config["pools"]:
         raise ValueError("Configure a nonempty Ethereum watchlist")
     addresses = [pool["address"].lower() for pool in config["pools"]]
     if len(set(addresses)) != len(addresses) or any(not ADDRESS.fullmatch(a) for a in addresses):
         raise ValueError("Watchlist requires unique Ethereum pool addresses")
-    run_id = str(uuid4())
+    run_id = str(UUID(run_id)) if run_id is not None else str(uuid4())
     directory = archive / run_id
-    directory.mkdir(parents=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    if {path.stem for path in directory.glob("*.json")} - set(addresses):
+        raise ValueError("Archived batch contains pools outside the current watchlist")
     records = []
     for address in addresses:
+        path = directory / f"{address}.json"
+        if path.exists():
+            record = validate(json.loads(path.read_text(encoding="utf-8")))
+            if record["run_id"] != run_id or record["pool_address"].lower() != address:
+                raise ValueError("Archived observation does not match its batch or filename")
+            records.append(record)
+            LOG.info("Reusing archived observation %s", path)
+            continue
         url = f"{API}/networks/eth/pools/{address}"
         payload = fetch(url)
         record = dict(source="geckoterminal", network="eth", pool_address=address,
                       observed_at=datetime.now(timezone.utc).isoformat(), run_id=run_id,
                       request_url=url, payload=payload)
         # Preserve even malformed responses so failures can be investigated.
-        path = directory / f"{address}.json"
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(record, indent=2, allow_nan=False), encoding="utf-8")
         temporary.replace(path)
@@ -132,13 +141,14 @@ def main():
     collect_parser.add_argument("--watchlist", type=Path, default=ROOT / "watchlist.json")
     collect_parser.add_argument("--archive", type=Path, default=ROOT / "data" / "raw")
     collect_parser.add_argument("--archive-only", action="store_true")
+    collect_parser.add_argument("--run-id", help="UUID identifying a batch to resume on retry")
     replay_parser = sub.add_parser("replay", help="Load saved observations without API calls")
     replay_parser.add_argument("path", type=Path)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         if args.command == "collect":
-            records = collect(args.watchlist, args.archive)
+            records = collect(args.watchlist, args.archive, args.run_id)
             if not args.archive_only:
                 load(records)
         else:

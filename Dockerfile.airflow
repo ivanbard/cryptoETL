@@ -1,0 +1,7 @@
+FROM apache/airflow:3.3.2-python3.12
+USER root
+# Keep dbt's dependencies separate from Airflow's pinned runtime.
+COPY requirements.txt /tmp/pipeline-requirements.txt
+RUN python -m venv /opt/pipeline && /opt/pipeline/bin/pip install --no-cache-dir -r /tmp/pipeline-requirements.txt
+USER airflow
+WORKDIR /app

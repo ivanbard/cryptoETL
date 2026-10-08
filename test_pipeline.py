@@ -53,10 +53,44 @@ class PipelineCheck(unittest.TestCase):
             saved = pipeline.json.loads(files[0].read_text())
             self.assertEqual(saved, collected[0])
             self.assertIs(pipeline.validate(saved), saved)
+            with patch.object(pipeline, "fetch") as fetch:
+                resumed = pipeline.collect(watchlist, archive, saved["run_id"])
+            fetch.assert_not_called()
+            self.assertEqual(resumed, collected)
+            invalid_batch = deepcopy(saved)
+            invalid_batch["run_id"] = str(uuid4())
+            files[0].write_text(pipeline.json.dumps(invalid_batch))
+            with self.assertRaises(ValueError):
+                pipeline.collect(watchlist, archive, saved["run_id"])
+            files[0].write_text(pipeline.json.dumps(saved))
+
+            # A retry fills a partial batch without changing earlier observations.
+            second_address = "0x" + "1" * 40
+            watchlist.write_text(pipeline.json.dumps({"network": "eth", "pools": [
+                {"address": address}, {"address": second_address}]}))
+            second_payload = deepcopy(payload)
+            second_payload["data"]["id"] = f"eth_{second_address}"
+            second_payload["data"]["attributes"]["address"] = second_address
+            with patch.object(pipeline, "fetch", side_effect=RuntimeError("API unavailable")):
+                with self.assertRaises(RuntimeError):
+                    pipeline.collect(watchlist, archive, saved["run_id"])
+            with patch.object(pipeline, "fetch", return_value=second_payload) as fetch, \
+                    patch.object(pipeline.time, "sleep"):
+                resumed = pipeline.collect(watchlist, archive, saved["run_id"])
+            fetch.assert_called_once()
+            self.assertEqual(resumed[0], saved)
+            self.assertEqual(resumed[1]["run_id"], saved["run_id"])
+
+            # Changing the cohort or corrupting a saved batch must stop recovery.
+            watchlist.write_text(pipeline.json.dumps({"network": "eth", "pools": [{"address": address}]}))
+            with self.assertRaises(ValueError):
+                pipeline.collect(watchlist, archive, saved["run_id"])
+            with self.assertRaises(ValueError):
+                pipeline.collect(watchlist, archive, "../outside")
             with patch.object(pipeline, "fetch", return_value={"data": None}), patch.object(pipeline.time, "sleep"):
                 with self.assertRaises(ValueError):
                     pipeline.collect(watchlist, archive)
-            self.assertEqual(len(list(archive.rglob("*.json"))), 2)
+            self.assertEqual(len(list(archive.rglob("*.json"))), 3)
 
         with patch.object(pipeline, "urlopen", side_effect=TimeoutError), patch.object(pipeline.time, "sleep") as sleep:
             with self.assertRaises(RuntimeError):

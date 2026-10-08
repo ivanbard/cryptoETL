@@ -10,6 +10,8 @@ GeckoTerminal API -> immutable JSON archives -> PostgreSQL raw layer
                                              -> Metabase
 ```
 
+Airflow can schedule the collection, load, and dbt checks hourly; see below.
+
 ## Run locally
 
 Prerequisite: Docker Desktop running with Linux containers. No API key required
@@ -86,6 +88,74 @@ Stop services with `docker compose stop`. Database state lives in a Docker
 volume; raw archives live in this repository's ignored `data/` directory.
 Deleting the Docker volume destroys database state, including Metabase setup.
 
+## Run with Airflow
+
+The optional Airflow 3.3.2 profile runs a local standalone instance with
+LocalExecutor. It has its own PostgreSQL metadata database and persistent
+Airflow home; the existing PostgreSQL database still stores pool observations.
+An initialization container gives Airflow's non-root user access to the archive
+directory and existing dbt output files, including those created by manual runs.
+dbt and the collector run in a separate Python environment inside the Airflow
+image so their dependencies do not replace Airflow's runtime dependencies.
+
+```powershell
+docker compose --profile airflow up -d --build airflow
+docker compose exec airflow cat /opt/airflow/simple_auth_manager_passwords.json.generated
+```
+
+The first startup initializes Airflow and may take a minute. Open
+http://localhost:8080 and sign in as `admin` with the generated password from
+the command above. The DAG `pool_observatory` starts **paused**. Unpause it to
+enable hourly collection, then use **Trigger DAG** to test immediately and
+inspect the graph and task logs. Unpausing can also start the latest eligible
+scheduled run; the concurrency limit keeps the runs sequential.
+Metabase can be started separately with `docker compose up -d metabase`.
+
+```text
+collect_archive -> load_batch -> build_analytics
+```
+
+- `collect_archive` validates the watchlist, fetches and archives observations,
+  and passes only the batch directory path through Airflow's XCom.
+- `load_batch` replays that exact batch into PostgreSQL in one transaction.
+- `build_analytics` runs `dbt build`, including the existing data tests.
+- Each task has two retries, two minutes apart, and a ten-minute timeout.
+  Only one DAG run is active at a time. Exhausted failures appear in the UI and
+  task logs; a callback also logs the failed DAG, run, and task identities.
+  External email or chat notifications are not configured.
+
+An Airflow run ID maps to a stable archive UUID. Retrying or clearing collection
+within the same run reuses validated saved responses and fetches only missing
+pools. Invalid saved responses stop the task for investigation; they are never
+silently overwritten. Do not change the watchlist while recovering a batch.
+Partial collections can contain different observation times across retries.
+Clearing a load task replays the same batch, so existing observations are not
+duplicated. **Triggering a new DAG run creates a new collection.**
+
+To recover a failed load, fix the database issue, then clear `load_batch` and
+its downstream task in the existing run using the UI. Keep `collect_archive`
+successful and keep its archived files. If collection failed, investigate the
+archive before clearing it and its downstream tasks. A delayed recovery may
+fail the two-hour dbt freshness check even though replay itself succeeds.
+
+Catchup is disabled: this endpoint supplies current observations, so executing
+missed schedules cannot recover historical prices. The hourly schedule requires
+Docker and this computer to stay running. Avoid manual collection or replay
+while a DAG run is active; Airflow's concurrency limit only governs this DAG.
+
+Verify the pipeline and DAG without calling the API:
+
+```powershell
+docker compose exec airflow python -m unittest test_pipeline test_airflow -v
+```
+
+Stop orchestration with `docker compose --profile airflow stop airflow airflow-db`.
+Keep the named volumes and `data/raw/` to retain run history and recovery data.
+This uses local demo database credentials and Airflow's development auth manager;
+the UI binds to loopback. It is a learning setup, not a production deployment.
+The shared local archive works because all tasks run on one Docker host; move it
+to shared object storage before introducing workers on other machines.
+
 ## Data contracts and interpretation
 
 - Grain: one provider, network, pool, and collection timestamp. The database
@@ -121,9 +191,9 @@ Deleting the Docker volume destroys database state, including Metabase setup.
    Rebuild from the archives and explain the primary key and transaction scope.
 3. **BI:** build the four Metabase charts and explain missing data, rolling
    windows, token identity, and the cohort's coverage limits.
-4. **Operations:** add an hourly scheduled run with failure reporting and a
-   configured-pool coverage check. Learn Airflow when implementing dependency
-   management and recovery. Until then, run collection manually.
+4. **Operations:** run the Airflow DAG hourly, inspect failures, and demonstrate
+   recovery from a saved batch. Add a database check against the configured
+   watchlist; current dbt recency checks cover only pools present in the data.
 5. **Second source:** add another provider for the same contract IDs; preserve
    source-specific observations and compare definitions before joining metrics.
 6. **Cloud:** move the raw archive to S3 and deploy the proven pipeline with a
